@@ -1,9 +1,15 @@
 {
   "name": "webrequest-mv3",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "exports": "./extension/lib/index.js",
+  "exports": {
+    ".": "./extension/lib/index.js",
+    "./migrate": "./migration/index.js"
+  },
+  "bin": { "webrequest-mv3": "./bin/webrequest-mv3.js" },
+  "files": ["extension/lib", "migration", "bin"],
+  "dependencies": { "acorn": "^8.15.0", "acorn-walk": "^8.3.4" },
   "scripts": {
     "test": "node --test test/*.test.js",
     "demo": "node scripts/demo.js"

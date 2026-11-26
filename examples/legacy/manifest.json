@@ -1,0 +1,8 @@
+{
+  "manifest_version": 2,
+  "name": "Legacy webRequest example",
+  "version": "1.0",
+  "permissions": ["webRequest", "webRequestBlocking", "http://127.0.0.1/*"],
+  "browser_action": { "default_title": "Last completed demo request" },
+  "background": { "scripts": ["background.js"], "persistent": true }
+}

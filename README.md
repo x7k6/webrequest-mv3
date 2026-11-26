@@ -2,7 +2,45 @@
 
 Port common `chrome.webRequest` listeners to Manifest V3. Describe blocking decisions as data and Chrome enforces them through `chrome.declarativeNetRequest` (DNR), even while the service worker is asleep. Keep ordinary event listeners for observation and use Chrome's asynchronous callback for authentication challenges.
 
-This is a migration library, not a drop-in replacement for `addListener(fn, filter, ['blocking'])`. Ordinary MV3 extensions cannot execute arbitrary JavaScript to decide the fate of each in-flight request.
+## Convert an existing extension
+
+From the parent directory of your **unpacked MV2 extension**, run (Node 20+):
+
+```sh
+npx --yes --package=github:x7k6/webrequest-mv3 webrequest-mv3 ./my-extension ./my-extension-mv3
+```
+
+In `chrome://extensions`, enable **Developer mode** and **Load unpacked** → `my-extension-mv3`. The command leaves your source alone and requires a **new** output directory outside the input tree. Start from the packaged extension files, not a project containing unrelated files or secrets. There's no runtime package or remote script to ship with the converted extension.
+
+For example, this existing MV2 registration can stay exactly as written in your source:
+
+```js
+chrome.webRequest.onBeforeRequest.addListener(
+  details => ({ cancel: details.method === 'POST' }),
+  { urls: ['https://example.org/beacon/*'] }, ['blocking'],
+);
+```
+
+The build extracts it into an enabled static DNR rule. Plain observation callbacks keep using the native API. See [`examples/legacy/`](examples/legacy/) for a complete MV2 input. From a checkout, run `npm ci` then `node bin/webrequest-mv3.js examples/legacy ../legacy-mv3` to convert it.
+
+**What converts automatically:**
+
+- `background.scripts` → a classic service worker that imports the scripts in manifest order; required/optional host patterns → their respective host permission lists; `browser_action` → `action`, including direct `chrome.browserAction` references in those scripts.
+- Direct, top-level `chrome.webRequest.onBeforeRequest.addListener(...)` with an inline filter, literal flags and an inline callback returning `{ cancel: true }`, `{ redirectUrl: 'https://…' }`, or the method test above. No callback is executed by the converter.
+- Inline blocking `onAuthRequired` handlers → native `asyncBlocking` callbacks and `webRequestAuthProvider`. Nonblocking listeners stay in place.
+
+**When code needs an edit:** registration that depends on a setting, removable named blocking listeners, header mutation, or decisions based on a request body need an explicit port. The converter reports the file and line for unsupported direct registrations instead of guessing. It inspects the listed background scripts, not arbitrary imported files, popup scripts or content scripts. Like any MV3 worker, the result has no DOM, `localStorage`, or persistent in-memory state. Review other MV2 APIs in your extension and verify the generated behavior in Chrome. Static rules use the URL semantics and Chrome limits [described below](#url-matching-and-limits).
+
+### Import it in a build or worker
+
+Install directly from GitHub (`npm install --save-dev github:x7k6/webrequest-mv3` for a build). In your **Node build script**:
+
+```js
+import { migrateExtension } from 'webrequest-mv3/migrate';
+await migrateExtension('./my-extension', './my-extension-mv3');
+```
+
+Already have an MV3 service worker? In a bundled worker use `import { createRuleStore, observe, provideAuth } from 'webrequest-mv3'`. Without a bundler, copy `extension/lib/` and import from `./lib/index.js` in a module worker. The browser entry point has no Node dependencies. Use the runtime helpers below for settings-driven rules and other cases that need an explicit port.
 
 ## Try it
 
@@ -10,7 +48,7 @@ This is a migration library, not a drop-in replacement for `addListener(fn, filt
 2. With Node.js 20+ installed, run `npm run demo` and open <http://127.0.0.1:8765/webrequest-mv3/>. No dependency installation or build is needed.
 3. **Blocked navigation** should show `ERR_BLOCKED_BY_CLIENT`. **Redirect** should land on **Headers**, where the server echoes `X-Demo-Request: MV3`. In DevTools → Network the response should also have `X-Demo-Response: MV3`. Pin the extension to see the HTTP status badge set by `onCompleted`.
 
-Run `npm test` for compiler, rule lifecycle, observation and auth tests.
+Run `npm ci && npm test` for migration, compiler, rule lifecycle, observation and auth tests.
 
 ## Port a listener
 
