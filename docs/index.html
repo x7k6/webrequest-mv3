@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>webRequest MV3 · Extension migration field guide</title>
+  <meta name="description" content="Convert an existing Chrome extension to Manifest V3. Start with the CLI, then learn which webRequest listeners become declarative rules.">
+  <link rel="icon" href="mark.svg" type="image/svg+xml"><link rel="stylesheet" href="site.css"><script defer src="site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="mast"><div class="shell">
+  <a class="brand" href="index.html"><img src="mark.svg" width="32" height="32" alt="">webRequest MV3</a>
+  <nav aria-label="Documentation"><a href="index.html" aria-current="page">Overview</a><a href="migration.html">Migration</a><a href="reference.html">API reference</a></nav>
+  <a class="repo" href="https://github.com/x7k6/webrequest-mv3">GitHub ↗</a>
+</div></header>
+<main id="main" class="shell">
+  <section class="hero" aria-labelledby="intro">
+    <div><p class="eyebrow">Extension field guide · v0.2.0</p>
+      <h1 id="intro">From listeners<br><em>to rules.</em></h1>
+      <p class="lead">Move a Chrome extension from Manifest V2 to V3. Convert simple blocking listeners into rules Chrome enforces, and keep using webRequest for observation and authentication.</p>
+      <div class="actions"><a class="primary" href="#quickstart">Run the converter <span aria-hidden="true">↓</span></a><a class="plain" href="migration.html#coverage">What converts?</a></div>
+    </div>
+    <figure class="diagram"><div class="fig-head">Request routing <span>Fig. 01</span></div>
+      <img src="route.svg" width="440" height="244" alt="An MV2 webRequest listener maps to a DNR rule, an observer, or an auth event in MV3.">
+      <figcaption class="fig-cap">Blocking runs in Chrome, even when the worker sleeps.</figcaption>
+    </figure>
+  </section>
+  <section class="section" id="quickstart" aria-labelledby="start-title">
+    <p class="label">01 / Quickstart</p>
+    <div class="section-title"><h2 id="start-title">Convert your first extension</h2><div class="meta"><span class="pill">Node 20+</span><span class="pill">Chrome 120+</span></div></div>
+    <p>Start in the parent directory of an unpacked MV2 extension. Replace <code>my-extension</code> with the folder containing its <code>manifest.json</code>. Choose a new sibling directory for the result.</p>
+    <div class="listing"><div class="bar"><span>Terminal · macOS / Linux</span></div><pre tabindex="0"><code>npx --yes --package=github:x7k6/webrequest-mv3 \
+  webrequest-mv3 ./my-extension ./my-extension-mv3</code></pre></div>
+    <p>Open <code>chrome://extensions</code>, enable <strong>Developer mode</strong>, select <strong>Load unpacked</strong>, and choose <code>my-extension-mv3</code>. Your original extension stays in its own directory.</p>
+    <div class="hint"><strong>Want a known-good input?</strong> Try the <a href="https://github.com/x7k6/webrequest-mv3/tree/main/examples/legacy">legacy example</a> and follow the <a href="migration.html#verify">verification steps</a>.</div>
+  </section>
+  <section class="section" aria-labelledby="guide-title"><p class="label">02 / Field guide</p><div class="section-title"><h2 id="guide-title">Choose your next step</h2></div>
+    <div class="cards">
+      <a class="next" href="migration.html"><span class="label">Guide 01 <span aria-hidden="true">↗</span></span><h3>Migrate an MV2 extension</h3><p>See which callbacks convert, inspect the generated files, and test a migrated extension in Chrome.</p></a>
+      <a class="next" href="reference.html"><span class="label">Guide 02 <span aria-hidden="true">↗</span></span><h3>Work in an MV3 worker</h3><p>Install settings-driven rules, edit headers, and register listeners for events that still need code.</p></a>
+    </div>
+  </section>
+</main>
+<footer class="foot"><div class="shell"><span>webRequest MV3 / Documentation</span><a href="https://github.com/x7k6/webrequest-mv3/issues">Report a docs issue ↗</a></div></footer>
+</body></html>

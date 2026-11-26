@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Runtime API reference · webRequest MV3</title>
+  <meta name="description" content="Install the MV3 runtime and use compileRule, createRuleStore, observe, and provideAuth in a Chrome extension service worker.">
+  <link rel="icon" href="mark.svg" type="image/svg+xml"><link rel="stylesheet" href="site.css"><script defer src="site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="mast"><div class="shell">
+  <a class="brand" href="index.html"><img src="mark.svg" width="32" height="32" alt="">webRequest MV3</a>
+  <nav aria-label="Documentation"><a href="index.html">Overview</a><a href="migration.html">Migration</a><a href="reference.html" aria-current="page">API reference</a></nav>
+  <a class="repo" href="https://github.com/x7k6/webrequest-mv3">GitHub ↗</a>
+</div></header>
+<main id="main" class="shell">
+  <div class="page-head"><p class="eyebrow">Guide 02 / Runtime</p><h1>API reference</h1><p class="lead">Use these four exports inside an MV3 extension. For the Node-only converter, see <a href="migration.html#build">migrateExtension()</a>.</p></div>
+  <div class="layout"><nav class="toc" aria-label="On this page"><strong>On this page</strong><a href="#install">Install &amp; permissions</a><a href="#compile">compileRule()</a><a href="#matching">URL matching</a><a href="#store">createRuleStore()</a><a href="#headers">Header edits</a><a href="#observe">observe()</a><a href="#auth">provideAuth()</a></nav>
+  <div class="article">
+    <section id="install"><h2>Install &amp; permissions</h2><p>For a bundled worker, install the package from GitHub and import the functions you need:</p>
+      <div class="listing"><div class="bar"><span>Terminal</span></div><pre tabindex="0"><code>npm install github:x7k6/webrequest-mv3</code></pre></div>
+      <div class="listing"><div class="bar"><span>worker.js · bundled entry point</span></div><pre tabindex="0"><code><span class="kw">import</span> { compileRule, createRuleStore, observe, provideAuth }
+  <span class="kw">from</span> <span class="str">'webrequest-mv3'</span>;</code></pre></div>
+      <p>Without a bundler, copy <a href="https://github.com/x7k6/webrequest-mv3/tree/main/extension/lib">extension/lib/</a> beside your worker and change the import path to <code>./lib/index.js</code>. Set <code>background.type</code> to <code>module</code>.</p>
+      <dl><dt>Rule installation</dt><dd>For the permission model in this guide, add <code>declarativeNetRequestWithHostAccess</code> and appropriate <code>host_permissions</code> for target hosts and, for subresources, their initiators.</dd>
+      <dt>Observation and auth</dt><dd>Declare <code>webRequest</code> plus the relevant host access. To answer auth challenges, also add <code>webRequestAuthProvider</code>. Register listeners at worker module scope, before any <code>await</code>.</dd></dl>
+    </section>
+    <section id="compile"><h2>compileRule(spec, scope?)</h2><p>Returns one native DNR rule without installing it. Use it to inspect the translation or generate rules in a build step.</p>
+      <div class="listing"><div class="bar"><span>Example · block a POST</span></div><pre tabindex="0"><code><span class="kw">const</span> rule = compileRule({
+  id: 100,
+  event: <span class="str">'onBeforeRequest'</span>,
+  filter: { urls: [<span class="str">'https://example.org/beacon/*'</span>] },
+  when: { requestMethods: [<span class="str">'post'</span>] },
+  response: { cancel: true },
+});</code></pre></div>
+      <dl><dt><code>id</code> and <code>priority</code></dt><dd>Use a positive integer ID. Priority defaults to 1. Conflicts follow <a href="https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest#rule-evaluation">Chrome’s rule evaluation order ↗</a>.</dd>
+      <dt><code>filter</code> and <code>when</code></dt><dd>Supply at least one URL pattern. Optionally limit resource <code>types</code>, lowercase <code>requestMethods</code>, <code>initiatorDomains</code> (including subdomains), or <code>domainType</code> (<code>firstParty</code> / <code>thirdParty</code>). Conditions must all be satisfied.</dd>
+      <dt><code>event</code> and <code>response</code></dt><dd>At <code>onBeforeRequest</code>, choose <code>{ cancel: true }</code> or <code>{ redirectUrl: 'https://…' }</code> with an absolute HTTP(S) destination. For request or response header stages, supply <a href="#headers">header edits</a>.</dd></dl>
+    </section>
+    <section id="matching"><h2>URL matching</h2><p><code>filter.urls</code> lists alternatives. For example, <code>*://*.example.org/api/*</code> matches HTTP or HTTPS on the apex or a subdomain. The path and query are case-sensitive. An omitted <code>types</code> includes all supported types, even main-frame navigation.</p>
+      <p>Use ASCII hostnames (Punycode for IDNs). Ports in requests are accepted, but explicit ports and literal IPv6 hosts in patterns are not. <code>&lt;all_urls&gt;</code> covers HTTP(S), WS(S), FTP, and file schemes, subject to Chrome’s interception and access permissions.</p>
+      <p>Each spec compiles to one anchored RE2 filter against the serialized URL. Percent-encoded paths can differ from native webRequest matching. For large lists, consider native static rules using <code>urlFilter</code> or domain conditions.</p>
+    </section>
+    <section id="store"><h2>createRuleStore(options)</h2><p>Reserve an inclusive ID range in one ruleset. Call <code>store.replace(specs)</code> with every rule that should remain in that range. Await the promise to confirm installation.</p>
+      <div class="listing"><div class="bar"><span>worker.js · dynamic rules</span></div><pre tabindex="0"><code><span class="kw">const</span> store = createRuleStore({ firstId: 100, lastId: 199 });
+
+chrome.runtime.onInstalled.addListener(() =&gt; {
+  store.replace([{
+    id: 100, event: <span class="str">'onBeforeRequest'</span>,
+    filter: { urls: [<span class="str">'https://example.org/beacon/*'</span>] },
+    response: { cancel: true },
+  }]).catch(console.error);
+});</code></pre></div>
+      <p><strong>Dynamic</strong> rules (default) survive browser restarts and extension updates. <strong>Session</strong> rules survive worker suspension but clear on browser shutdown or extension update. Set <code>scope: 'session'</code> to use a nonnegative <code>filter.tabId</code>.</p>
+      <div class="hint"><strong>One writer per range.</strong> Reuse one store instance to serialize replacements. Omitting an ID removes it; <code>await store.replace([])</code> clears the range. Rules outside it remain intact. A rejected atomic replacement leaves the previous rules in place.</div>
+    </section>
+    <section id="headers"><h2>Header edits</h2><p>Use <code>onBeforeSendHeaders</code> with <code>requestHeaders</code> for outgoing requests, or <code>onHeadersReceived</code> with <code>responseHeaders</code> for incoming responses. Describe individual changes rather than returning the full header list.</p>
+      <div class="listing"><div class="bar"><span>Rule spec · set a response header</span></div><pre tabindex="0"><code><span class="kw">const</span> headerRule = {
+  id: 101, event: <span class="str">'onHeadersReceived'</span>,
+  filter: { urls: [<span class="str">'https://example.org/api/*'</span>] },
+  response: { responseHeaders: [
+    { header: <span class="str">'X-Demo'</span>, operation: <span class="str">'set'</span>, value: <span class="str">'MV3'</span> }
+  ] },
+};</code></pre></div>
+      <p>Use <code>set</code> or <code>append</code> with a string value. Use <code>remove</code> without a value. Chrome limits which request headers may be appended.</p>
+    </section>
+    <section id="observe"><h2>observe(name, listener, filter, options?)</h2><p>Registers a native nonblocking webRequest listener synchronously and returns an unsubscribe function. Pass event-specific options, such as <code>responseHeaders</code> on <code>onCompleted</code>, to receive additional details. Observation cannot change an in-flight request.</p>
+      <div class="listing"><div class="bar"><span>worker.js · observe errors</span></div><pre tabindex="0"><code><span class="kw">const</span> unsubscribe = observe(<span class="str">'onErrorOccurred'</span>,
+  ({ error }) =&gt; console.debug(error),
+  { urls: [<span class="str">'https://example.org/*'</span>] }
+);</code></pre></div>
+    </section>
+    <section id="auth"><h2>provideAuth(filter, provider)</h2><p>Returns an unsubscribe function and bridges a sync or async provider to Chrome’s auth callback. Return credentials for a matching challenge, <code>{ cancel: true }</code> to stop it, or <code>undefined</code> to let Chrome handle it. A thrown error, rejection, or malformed response cancels the challenge.</p>
+      <div class="listing"><div class="bar"><span>worker.js · scoped auth provider</span></div><pre tabindex="0"><code>provideAuth({ urls: [<span class="str">'https://intranet.example.org/*'</span>] },
+  <span class="kw">async</span> details =&gt; {
+    <span class="kw">if</span> (details.isProxy || details.realm !== <span class="str">'intranet'</span> ||
+        details.challenger.host !== <span class="str">'intranet.example.org'</span> ||
+        details.challenger.port !== 443) <span class="kw">return</span>;
+    <span class="kw">return</span> lookupForChallenge(details);
+  });</code></pre></div>
+      <p>Implement <code>lookupForChallenge</code> in your application. Bound retries and return credentials as <code>{ authCredentials: { username, password } }</code>.</p>
+    </section>
+  </div></div>
+</main>
+<footer class="foot"><div class="shell"><span>webRequest MV3 / Runtime API</span><a href="https://github.com/x7k6/webrequest-mv3/tree/main/extension">View the working example ↗</a></div></footer>
+</body></html>

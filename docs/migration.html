@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Migration guide · webRequest MV3</title>
+  <meta name="description" content="A practical guide to converting MV2 background scripts, inspecting the generated MV3 extension, and testing it in Chrome.">
+  <link rel="icon" href="mark.svg" type="image/svg+xml"><link rel="stylesheet" href="site.css"><script defer src="site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="mast"><div class="shell">
+  <a class="brand" href="index.html"><img src="mark.svg" width="32" height="32" alt="">webRequest MV3</a>
+  <nav aria-label="Documentation"><a href="index.html">Overview</a><a href="migration.html" aria-current="page">Migration</a><a href="reference.html">API reference</a></nav>
+  <a class="repo" href="https://github.com/x7k6/webrequest-mv3">GitHub ↗</a>
+</div></header>
+<main id="main" class="shell">
+  <div class="page-head"><p class="eyebrow">Guide 01 / Build time</p><h1>Migration guide</h1><p class="lead">Start with the extension you ship. End with an unpacked MV3 copy you can inspect, load, and test.</p></div>
+  <div class="layout"><nav class="toc" aria-label="On this page"><strong>On this page</strong><a href="#input">Prepare the input</a><a href="#coverage">What converts?</a><a href="#output">Inspect the output</a><a href="#build">Use a build script</a><a href="#verify">Verify in Chrome</a><a href="#troubleshooting">Troubleshooting</a></nav>
+  <div class="article">
+    <section id="input"><h2>Prepare the input</h2><p>Point the <a href="index.html#quickstart">CLI</a> at a directory with an MV2 manifest and a <code>background.scripts</code> list. If you use a bundler, build the extension first. The converter copies packaged files, so keep unrelated project files and secrets out of this directory.</p>
+      <p>The output directory must not exist yet; its parent must exist and sit outside the input tree (or be the input’s parent). Use another fresh output directory for a second conversion.</p>
+    </section>
+    <section id="coverage"><h2>What converts?</h2><p>A direct, top-level blocking registration with literal filter data can become an always-enabled rule. For example, this callback has a decision Chrome can make ahead of time:</p>
+      <div class="listing"><div class="bar"><span>background.js · MV2 input</span></div><pre tabindex="0"><code>chrome.webRequest.onBeforeRequest.addListener(
+  details =&gt; ({ cancel: details.method === <span class="str">'POST'</span> }),
+  { urls: [<span class="str">'https://example.org/beacon/*'</span>] },
+  [<span class="str">'blocking'</span>],
+);</code></pre></div>
+      <p>The resulting DNR rule blocks <strong>POST</strong> requests matching that URL pattern. Other methods continue normally. Chrome evaluates the rule without calling into the worker.</p>
+      <dl><dt>Cancel or redirect</dt><dd>Use an inline callback returning <code>{ cancel: true }</code>, an absolute HTTP(S) <code>redirectUrl</code>, or a supported uppercase method equality as above. Use literal listener flags and URL patterns.</dd>
+      <dt>Observe a request</dt><dd>Keep direct nonblocking listener registrations. They receive native Chrome event details, including completion and error events.</dd>
+      <dt>Answer an auth challenge</dt><dd>An inline blocking <code>onAuthRequired</code> handler becomes an <code>asyncBlocking</code> callback. The converter adds the auth provider permission.</dd>
+      <dt>Use settings, edit headers, or inspect the body</dt><dd>These need an explicit port. Update a <a href="reference.html#store">rule store</a> when settings change, describe headers as edits, and use an observer for body inspection. MV3 doesn’t offer arbitrary body-dependent blocking.</dd></dl>
+    </section>
+    <section id="output"><h2>Inspect the output</h2><dl>
+      <dt><code>manifest.json</code></dt><dd>The manifest declares MV3 and a service worker. Required and optional host patterns move into their respective host permission lists. A browser action becomes an action.</dd>
+      <dt><code>webrequest-mv3-worker.js</code></dt><dd>A classic worker imports the copied background scripts in manifest order. Direct <code>chrome.browserAction</code> references in those scripts become <code>chrome.action</code>.</dd>
+      <dt><code>webrequest-mv3-rules.json</code></dt><dd>Created when static rules are extracted. The manifest enables the ruleset; each migrated registration is marked with its rule ID in the copied script.</dd></dl>
+      <div class="hint"><strong>Check the rest of the extension.</strong> Only the listed background scripts are analyzed. Review imported files, popups, and content scripts separately. A worker has no DOM or <code>localStorage</code>, and its globals can disappear between events.</div>
+    </section>
+    <section id="build"><h2>Use a build script</h2><p>Install the Node entry point in your build project, outside the extension you package.</p>
+      <div class="listing"><div class="bar"><span>Terminal</span></div><pre tabindex="0"><code>npm install --save-dev github:x7k6/webrequest-mv3</code></pre></div>
+      <div class="listing"><div class="bar"><span>build.mjs · Node.js</span></div><pre tabindex="0"><code><span class="kw">import</span> { migrateExtension } <span class="kw">from</span> <span class="str">'webrequest-mv3/migrate'</span>;
+
+<span class="kw">const</span> { outputDir, ruleCount } = <span class="kw">await</span> migrateExtension(
+  <span class="str">'./my-extension'</span>, <span class="str">'./my-extension-mv3'</span>
+);
+console.log(outputDir, ruleCount);</code></pre></div>
+      <p>Run <code>node build.mjs</code>. The promise resolves after the copy is ready, or rejects with a diagnostic. The build-time parser is not included in the extension.</p>
+    </section>
+    <section id="verify"><h2>Verify in Chrome</h2><p>To exercise the converter with a small fixture, run these commands from a checkout of the <a href="https://github.com/x7k6/webrequest-mv3">repository</a>:</p>
+      <div class="listing"><div class="bar"><span>Terminal · repository root</span></div><pre tabindex="0"><code>npm ci
+node bin/webrequest-mv3.js examples/legacy ../legacy-mv3
+npm run demo</code></pre></div>
+      <ol><li>In <code>chrome://extensions</code>, enable <strong>Developer mode</strong> and load <code>legacy-mv3</code> unpacked.</li><li>Open <code>http://127.0.0.1:8765/webrequest-mv3/</code>. <strong>Blocked navigation</strong> should show <code>ERR_BLOCKED_BY_CLIENT</code>.</li><li>Follow <strong>Redirect</strong>. You should land on the headers page. Pin the extension to see the observer set the status badge to <strong>200</strong>.</li></ol>
+      <p>The legacy fixture has no header edits. To test those too, disable the converted fixture and load the repository’s <a href="https://github.com/x7k6/webrequest-mv3/tree/main/extension">MV3 example</a>. Its headers page echoes <code>X-Demo-Request: MV3</code>.</p>
+    </section>
+    <section id="troubleshooting"><h2>Troubleshooting</h2>
+      <details><summary>The CLI reports a file and line number.</summary><p>Check that the registration is direct, the blocking callback is inline, and the filter is literal data. A callback that reads runtime state or has side effects cannot be extracted. Move notifications into <a href="reference.html#observe">observe()</a> and use a rule store for settings-driven decisions.</p></details>
+      <details><summary>The output directory already exists.</summary><p>Pick a new sibling directory. The converter refuses to overwrite an existing directory, even an empty one.</p></details>
+      <details><summary>The extension loads, but the rule doesn’t fire.</summary><p>Check the target and initiator host permissions, Chrome’s site-access setting, and the rule’s URL pattern, resource types, and method. See <a href="reference.html#matching">URL matching</a>. For generated rules, inspect the static rules file rather than querying dynamic rules.</p></details>
+      <details><summary>My extension uses an HTML background page.</summary><p>Move DOM-dependent work out of the background page before migrating. The converter expects a list of local background scripts; it does not translate a page into a worker. See <a href="https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers">Chrome’s service worker migration guide ↗</a>.</p></details>
+    </section>
+  </div></div>
+</main>
+<footer class="foot"><div class="shell"><span>webRequest MV3 / Migration</span><a href="reference.html">Next: API reference →</a></div></footer>
+</body></html>

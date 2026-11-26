@@ -2,6 +2,8 @@
 
 Port common `chrome.webRequest` listeners to Manifest V3. Describe blocking decisions as data and Chrome enforces them through `chrome.declarativeNetRequest` (DNR), even while the service worker is asleep. Keep ordinary event listeners for observation and use Chrome's asynchronous callback for authentication challenges.
 
+**Documentation:** [Quickstart](https://x7k6.github.io/webrequest-mv3/) · [Migration guide](https://x7k6.github.io/webrequest-mv3/migration.html) · [API reference](https://x7k6.github.io/webrequest-mv3/reference.html)
+
 ## Convert an existing extension
 
 From the parent directory of your **unpacked MV2 extension**, run (Node 20+):
@@ -121,3 +123,9 @@ provideAuth({ urls: ['https://intranet.example.org/*'] }, async details => {
 `provideAuth` bridges sync/Promise results to `onAuthRequired`'s `asyncBlocking` callback. A thrown error, rejection, or malformed result cancels that challenge. Both helpers return a function that removes the registered listener.
 
 References: [Migrating blocking listeners](https://developer.chrome.com/docs/extensions/develop/migrate/blocking-web-requests) · [declarativeNetRequest](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) · [webRequest](https://developer.chrome.com/docs/extensions/reference/api/webRequest).
+
+## Publish or preview the docs
+
+The static site is in [`docs/`](docs/). In **Settings → Pages → Build and deployment**, select **Deploy from a branch**, choose **main** and **/docs**, then **Save**. Subsequent pushes to that source publish automatically. No build command or dependencies are required.
+
+For a local preview, run `python3 -m http.server 8000 --bind 127.0.0.1 --directory docs` from the repository root and open <http://127.0.0.1:8000/>.
