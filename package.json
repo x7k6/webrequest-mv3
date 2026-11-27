@@ -9,7 +9,7 @@
   },
   "bin": { "webrequest-mv3": "./bin/webrequest-mv3.js" },
   "files": ["extension/lib", "migration", "bin"],
-  "dependencies": { "acorn": "^8.15.0", "acorn-walk": "^8.3.4" },
+  "dependencies": { "acorn": "^8.15.0", "acorn-walk": "^8.3.4", "parse5": "^7.3.0" },
   "scripts": {
     "test": "node --test test/*.test.js",
     "demo": "node scripts/demo.js"

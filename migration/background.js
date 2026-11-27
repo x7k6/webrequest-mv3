@@ -55,7 +55,9 @@ function ruleFor(callback, filter, id) {
   return compileRule(spec);
 }
 
-export function convertBackground(source, filename, firstId, emitScript) {
+const pageGlobals = new Set(['document', 'window', 'localStorage', 'sessionStorage', 'XMLHttpRequest', 'DOMParser']);
+
+export function convertBackground(source, filename, firstId, emitScript, { fromPage = false } = {}) {
   let tree;
   try { tree = parse(source, { ecmaVersion: 'latest', locations: true }); }
   catch (error) { throw new Error(`${filename}:${error.loc.line}:${error.loc.column + 1}: ${error.message}`); }
@@ -78,8 +80,14 @@ export function convertBackground(source, filename, firstId, emitScript) {
     edits.push([node.start, node.end, value]);
   }
   ancestor(tree, {
+    Identifier(node) {
+      if (fromPage && pageGlobals.has(node.name)) fail(node, `${node.name} is unavailable in a service worker; port this page dependency manually`);
+    },
     MemberExpression(node, ancestors) {
       const namespace = member(node.object), name = member(node);
+      if (fromPage && ['self', 'globalThis'].includes(node.object.name) && pageGlobals.has(name)) {
+        fail(node, `${name} is unavailable in a service worker; port this page dependency manually`);
+      }
       if (node.object.object?.name === 'chrome') {
         if (namespace === 'extension' && runtimeAliases.has(name)) replace(node, `chrome.runtime.${runtimeAliases.get(name)}`);
         if (namespace === 'tabs' && name === 'sendRequest') replace(node, 'chrome.tabs.sendMessage');

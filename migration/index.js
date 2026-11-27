@@ -1,14 +1,15 @@
 import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { convertBackground } from './background.js';
+import { readBackgroundPage } from './page.js';
 
 const worker = 'webrequest-mv3-worker.js';
 const rulesFile = 'webrequest-mv3-rules.json';
 const json = value => JSON.stringify(value, null, 2) + '\n';
 
-function convertManifest(m, rules, auth, scripting) {
-  if (m.page_action || m.app || m.declarative_net_request || m.background.page) {
-    throw new Error('manifest.json: page actions, apps, existing DNR rulesets and HTML background pages need manual migration');
+function convertManifest(m, rules, auth, scripting, workerPath) {
+  if (m.page_action || m.app || m.declarative_net_request) {
+    throw new Error('manifest.json: page actions, apps and existing DNR rulesets need manual migration');
   }
   if (m.optional_permissions?.includes('webRequestBlocking')) {
     throw new Error('manifest.json: optional blocking needs a permission-aware dynamic ruleset');
@@ -55,7 +56,7 @@ function convertManifest(m, rules, auth, scripting) {
   }
   m.manifest_version = 3;
   if (!(parseInt(m.minimum_chrome_version, 10) >= 120)) m.minimum_chrome_version = '120';
-  m.background = { service_worker: worker };
+  m.background = { service_worker: workerPath };
 }
 
 /** Build a new unpacked extension from a directory containing an MV2 manifest. */
@@ -74,9 +75,13 @@ export async function migrateExtension(inputDir, outputDir) {
     } });
     const manifestPath = join(output, 'manifest.json');
     const m = JSON.parse(await readFile(manifestPath, 'utf8'));
-    const scripts = m.background?.scripts;
-    if (m.manifest_version !== 2 || !Array.isArray(scripts) || !scripts.length) {
-      throw new Error('Expected an MV2 manifest.json with a background.scripts list');
+    if (m.manifest_version !== 2) throw new Error('Expected an MV2 manifest.json');
+    const fromPage = m.background?.page !== undefined;
+    if (fromPage && m.background.scripts !== undefined) throw new Error('manifest.json: choose background.page or background.scripts, not both');
+    const { scripts, directory } = fromPage ? await readBackgroundPage(output, m.background.page)
+      : { scripts: m.background?.scripts, directory: '.' };
+    if (!Array.isArray(scripts) || !scripts.length) {
+      throw new Error('Expected a background.scripts list or a script-only background.page');
     }
     const rules = [];
     let auth = false, scripting = false;
@@ -96,16 +101,19 @@ export async function migrateExtension(inputDir, outputDir) {
       imports.push(name);
       const path = join(output, name);
       const old = await readFile(path, 'utf8');
-      const converted = convertBackground(old, name, rules.length + 1, emitScript);
+      const converted = convertBackground(old, name, rules.length + 1, emitScript, { fromPage });
       if (converted.source !== old) await writeFile(path, converted.source);
       for (const rule of converted.rules) rules.push(rule);
       auth ||= converted.auth;
       scripting ||= converted.scripting;
     }
-    convertManifest(m, rules, auth, scripting);
+    // Keep relative URLs in the scripts based in the original page directory.
+    const workerPath = posix.join(directory, worker);
+    convertManifest(m, rules, auth, scripting, workerPath);
     for (const [path, contents] of injected) await writeFile(join(output, path), contents, { flag: 'wx' });
     if (rules.length) await writeFile(join(output, rulesFile), json(rules), { flag: 'wx' });
-    await writeFile(join(output, worker), `importScripts(${imports.map(name => JSON.stringify('./' + name)).join(', ')});\n`, { flag: 'wx' });
+    const urls = imports.map(name => JSON.stringify('./' + posix.relative(directory, name)));
+    await writeFile(join(output, workerPath), `importScripts(${urls.join(', ')});\n`, { flag: 'wx' });
     await writeFile(manifestPath, json(m));
     return { outputDir: output, ruleCount: rules.length };
   } catch (error) {

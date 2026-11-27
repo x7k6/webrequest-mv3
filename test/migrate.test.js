@@ -81,6 +81,50 @@ test('protect source tree and reject out-of-package script paths', async t => {
   await assert.rejects(stat(f.out), { code: 'ENOENT' });
 });
 
+test('port a script-only HTML page: preserve source order, relative URLs, and existing conversions', async t => {
+  const f = await fixture(t, `const first = chrome.extension.getURL('settings.html');`, {
+    background: { page: 'pages/background.html', persistent: false },
+  });
+  await mkdir(join(f.src, 'pages'));
+  await writeFile(join(f.src, 'pages/background.html'), `<!DOCTYPE html><html lang="en"><head>
+    <meta charset="utf-8"><title>Background</title><!-- <script src="unused.js"></script> -->
+    <SCRIPT SRC='../bg.js'></SCRIPT></head><body>
+    <script type="text/javascript" src="./events.js"></script></body></html>`);
+  await writeFile(join(f.src, 'pages/events.js'), `globalThis.url = first;\n` + registration('() => ({cancel: true})'));
+  assert.equal((await f.build()).ruleCount, 1);
+  const m = JSON.parse(await f.read('manifest.json'));
+  const worker = m.background.service_worker;
+  assert.equal(worker, 'pages/webrequest-mv3-worker.js');
+  let imports;
+  runInNewContext(await f.read(worker), { importScripts(...urls) { imports = urls; } });
+  const base = new URL(worker, 'https://example.invalid/');
+  const context = { chrome: { runtime: { getURL: path => 'fixture:/' + path } } };
+  for (const url of imports) runInNewContext(await f.read(new URL(url, base).pathname.slice(1)), context);
+  assert.equal(context.url, 'fixture:/settings.html');
+  assert.equal(m.permissions.includes('offscreen'), false);
+});
+
+test('reject unsupported HTML and external sources with a page location and no partial output', async t => {
+  for (const html of [
+    '<script>start()</script>', '<script async src="bg.js"></script>', '<script type="module" src="bg.js"></script>',
+    '<script src="https://cdn.example/bg.js"></script>', '<script src="../outside.js"></script>',
+    '<base href="/elsewhere/">', '<body onload="start()">', '<iframe src="frame.html"></iframe>',
+  ]) {
+    const f = await fixture(t, '', { background: { page: 'background.html' } });
+    await writeFile(join(f.src, 'background.html'), `<!doctype html>\n${html}`);
+    await assert.rejects(f.build(), /background\.html:2:\d+:/);
+    await assert.rejects(stat(f.out), { code: 'ENOENT' });
+  }
+});
+
+test('diagnose page-dependent JavaScript and ambiguous manifest input', async t => {
+  const f = await fixture(t, `\nconst root = document.body;`, { background: { page: 'background.html' } });
+  await writeFile(join(f.src, 'background.html'), '<script src="/bg.js"></script>');
+  await assert.rejects(f.build(), /bg\.js:2:\d+: document is unavailable/);
+  const both = await fixture(t, '', { background: { page: 'background.html', scripts: ['bg.js'] } });
+  await assert.rejects(both.build(), /choose background.page or background.scripts/);
+});
+
 test('inject packaged code into the requested frame and preserve callback results and lastError', async t => {
   const f = await fixture(t, `chrome.tabs.query({ active: true }, ([tab]) => {
     chrome.tabs.executeScript(tab.id, {code: 'document.title', frameId: 3}, values => {

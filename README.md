@@ -22,8 +22,21 @@ Open `chrome://extensions` in **Chrome 120+**, enable **Developer mode**, select
 | Nonblocking webRequest listener; inline blocking `onAuthRequired` handler | Native observation; native `asyncBlocking` auth callback with `webRequestAuthProvider`. |
 | `tabs.executeScript`, `tabs.insertCSS`, `tabs.removeCSS` | Corresponding `chrome.scripting` methods, with `target`, `files` or `css`, and the `scripting` permission. |
 | `extension.getURL`, legacy `extension` messaging and connection aliases | `runtime.getURL`, `runtime.sendMessage`, `runtime.onMessage`, and corresponding runtime connection events. `tabs.sendRequest` becomes **`tabs.sendMessage`** so the message still goes to the tab. |
-| `background.scripts`, `browser_action`, `options_page` | A classic service worker importing scripts in manifest order, `action`, and `options_ui` opening in its own tab. |
+| `background.scripts` or a script-only [`background.page`](#html-background-pages) | A classic service worker importing packaged scripts in their original order. |
+| `browser_action`, `options_page` | `action`, and `options_ui` opening in its own tab. |
 | Required and optional host patterns in permission lists | `host_permissions` and `optional_host_permissions`, respectively. |
+
+### HTML background pages
+
+If your MV2 manifest uses `"background": { "page": "pages/background.html" }`, the same CLI can convert a page like this:
+
+```html
+<!doctype html>
+<script src="../shared.js"></script>
+<script src="listeners.js"></script>
+```
+
+The worker is generated beside the HTML file. It loads `shared.js` first, then `pages/listeners.js`; both scripts go through the normal API migrations. This subset accepts classic local `.js` scripts, comments, and simple document metadata. Inline scripts, `async`/`defer`, modules, and markup such as iframes require manual migration. Common page-only globals such as `document` and `localStorage` are flagged with a source location.
 
 ### Example: tab injection
 
@@ -61,7 +74,7 @@ const { outputDir, ruleCount } = await migrateExtension('./my-extension', './my-
 console.log(`${ruleCount} static network rules in ${outputDir}`);
 ```
 
-The converter inspects the files listed in `background.scripts`. Review popup scripts, content scripts, imported files, and aliases separately. HTML background pages, DOM access, persistent globals, and arbitrary per-request blocking decisions need explicit migration.
+The converter inspects the scripts listed in the manifest or loaded directly by a supported background page. Review popup scripts, content scripts, imported files, and aliases separately. In particular, callers of `getBackgroundPage()` need a worker-compatible communication path, such as runtime messaging. Worker globals do not persist across suspension.
 
 For settings-driven rules or header edits, import `createRuleStore` and `compileRule` from `webrequest-mv3` in a bundled worker. `observe` and `provideAuth` cover native request events. Without a bundler, copy [`extension/lib/`](extension/lib/) and import from `./lib/index.js` in a module worker. See the [working worker](extension/worker.js) and [API reference](https://x7k6.github.io/webrequest-mv3/reference.html) for permissions, matching limits, and examples.
 
