@@ -1,5 +1,7 @@
 # webrequest-mv3
 
+![Manifest V2 to V3: original package in, unpacked MV3 extension out.](docs/cover.svg)
+
 Convert a packaged Chrome extension from Manifest V2 to Manifest V3. The tool follows manifest entries for background scripts, extension pages and content scripts, and writes a **new, unpacked extension**. Use it to move blocking network listeners to declarative rules, move tab injection to `chrome.scripting`, and update legacy messaging calls.
 
 [Documentation](https://x7k6.github.io/webrequest-mv3/) · [Migration guide](https://x7k6.github.io/webrequest-mv3/migration.html) · [Runtime API](https://x7k6.github.io/webrequest-mv3/reference.html)
@@ -32,6 +34,8 @@ This creates `my-extension-mv3` beside `my-extension`. Open `chrome://extensions
 `--check` runs the converter on a temporary copy and cleans it up; test runtime behavior in Chrome after conversion. The original `webrequest-mv3 <input> <output>` syntax still works. The destination must be a new folder outside the input, with an existing parent.
 
 ## What gets migrated
+
+![MV2 webRequest listeners map to MV3 declarative rules, observers, or authentication events.](docs/route.svg)
 
 | MV2 input | MV3 output |
 | --- | --- |

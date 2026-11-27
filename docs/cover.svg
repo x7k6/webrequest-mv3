@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 176" width="880" height="176" role="img" aria-labelledby="title desc">
+  <title id="title">Manifest V2 to Manifest V3</title>
+  <desc id="desc">Three circuit traces connect to an MV3 chip. The converter builds a new extension from the original package.</desc>
+  <defs>
+    <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse"><circle cx="8" cy="8" r="1" fill="#45645b"/></pattern>
+  </defs>
+  <rect width="880" height="176" rx="10" fill="#213e38"/>
+  <rect x="530" width="350" height="176" rx="10" fill="url(#grid)"/>
+  <g font-family="ui-monospace, Menlo, monospace" fill="#f1b493" font-size="13" letter-spacing="2">
+    <text x="32" y="37">CHROME EXTENSIONS / FIELD GUIDE</text>
+  </g>
+  <text x="30" y="99" fill="#fff9e8" font-family="Georgia, serif" font-size="50">Manifest V2 to V3</text>
+  <text x="33" y="139" fill="#d6e3d8" font-family="system-ui, sans-serif" font-size="18">Original package in. Unpacked MV3 extension out.</text>
+  <g fill="none" stroke="#dfae89" stroke-width="3" stroke-linejoin="round">
+    <path d="M559 46h73l25 25h55M588 88h124M559 130h73l25-25h55"/>
+    <circle cx="554" cy="46" r="5"/><circle cx="583" cy="88" r="5"/><circle cx="554" cy="130" r="5"/>
+  </g>
+  <rect x="712" y="50" width="114" height="76" rx="6" fill="#f2f1e8"/>
+  <text x="769" y="98" text-anchor="middle" fill="#254843" font-family="ui-monospace, Menlo, monospace" font-size="30" font-weight="bold">MV3</text>
+</svg>

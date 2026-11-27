@@ -4,7 +4,15 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-const help = `Convert an unpacked Chrome extension from Manifest V2 to V3.
+const banner = String.raw`  __  __  __     __  _____
+ |  \/  | \ \   / / |___ /    webrequest-mv3
+ | |\/| |  \ \ / /    |_ \    Chrome extension migration CLI
+ | |  | |   \ V /    ___) |
+ |_|  |_|    \_/    |____/`;
+
+const help = `${banner}
+
+Convert an unpacked Chrome extension from Manifest V2 to V3.
 
 Usage:
   webrequest-mv3                                            Show this help
