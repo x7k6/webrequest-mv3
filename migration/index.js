@@ -6,7 +6,7 @@ const worker = 'webrequest-mv3-worker.js';
 const rulesFile = 'webrequest-mv3-rules.json';
 const json = value => JSON.stringify(value, null, 2) + '\n';
 
-function convertManifest(m, rules, auth) {
+function convertManifest(m, rules, auth, scripting) {
   if (m.page_action || m.app || m.declarative_net_request || m.background.page) {
     throw new Error('manifest.json: page actions, apps, existing DNR rulesets and HTML background pages need manual migration');
   }
@@ -25,11 +25,17 @@ function convertManifest(m, rules, auth) {
   }
   const permissions = new Set(m.permissions);
   if (auth) permissions.add('webRequestAuthProvider');
+  if (scripting) permissions.add('scripting');
   if (rules.length) {
     permissions.add('declarativeNetRequestWithHostAccess');
     m.declarative_net_request = { rule_resources: [{ id: 'migrated', enabled: true, path: rulesFile }] };
   }
   m.permissions = [...permissions];
+  if (m.options_page) {
+    if (m.options_ui) throw new Error('manifest.json: choose either options_page or options_ui');
+    m.options_ui = { page: m.options_page, open_in_tab: true };
+    delete m.options_page;
+  }
   if (m.browser_action) {
     m.action = m.browser_action;
     delete m.browser_action;
@@ -73,7 +79,13 @@ export async function migrateExtension(inputDir, outputDir) {
       throw new Error('Expected an MV2 manifest.json with a background.scripts list');
     }
     const rules = [];
-    let auth = false;
+    let auth = false, scripting = false;
+    const injected = new Map();
+    const emitScript = source => {
+      const path = `webrequest-mv3-injected-${injected.size + 1}.js`;
+      injected.set(path, source);
+      return path;
+    };
     const imports = [];
     for (const entry of scripts) {
       const name = typeof entry === 'string' && entry.replace(/^(\.\/)+/, '');
@@ -84,12 +96,14 @@ export async function migrateExtension(inputDir, outputDir) {
       imports.push(name);
       const path = join(output, name);
       const old = await readFile(path, 'utf8');
-      const converted = convertBackground(old, name, rules.length + 1);
+      const converted = convertBackground(old, name, rules.length + 1, emitScript);
       if (converted.source !== old) await writeFile(path, converted.source);
       for (const rule of converted.rules) rules.push(rule);
       auth ||= converted.auth;
+      scripting ||= converted.scripting;
     }
-    convertManifest(m, rules, auth);
+    convertManifest(m, rules, auth, scripting);
+    for (const [path, contents] of injected) await writeFile(join(output, path), contents, { flag: 'wx' });
     if (rules.length) await writeFile(join(output, rulesFile), json(rules), { flag: 'wx' });
     await writeFile(join(output, worker), `importScripts(${imports.map(name => JSON.stringify('./' + name)).join(', ')});\n`, { flag: 'wx' });
     await writeFile(manifestPath, json(m));

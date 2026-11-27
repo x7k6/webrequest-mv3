@@ -15,7 +15,7 @@
 </div></header>
 <main id="main" class="shell">
   <div class="page-head"><p class="eyebrow">Guide 01 / Build time</p><h1>Migration guide</h1><p class="lead">Start with the extension you ship. End with an unpacked MV3 copy you can inspect, load, and test.</p></div>
-  <div class="layout"><nav class="toc" aria-label="On this page"><strong>On this page</strong><a href="#input">Prepare the input</a><a href="#coverage">What converts?</a><a href="#output">Inspect the output</a><a href="#build">Use a build script</a><a href="#verify">Verify in Chrome</a><a href="#troubleshooting">Troubleshooting</a></nav>
+  <div class="layout"><nav class="toc" aria-label="On this page"><strong>On this page</strong><a href="#input">Prepare the input</a><a href="#coverage">What converts?</a><a href="#scripting">Tab injection</a><a href="#output">Inspect the output</a><a href="#build">Use a build script</a><a href="#verify">Verify in Chrome</a><a href="#troubleshooting">Troubleshooting</a></nav>
   <div class="article">
     <section id="input"><h2>Prepare the input</h2><p>Point the <a href="index.html#quickstart">CLI</a> at a directory with an MV2 manifest and a <code>background.scripts</code> list. If you use a bundler, build the extension first. The converter copies packaged files, so keep unrelated project files and secrets out of this directory.</p>
       <p>The output directory must not exist yet; its parent must exist and sit outside the input tree (or be the input’s parent). Use another fresh output directory for a second conversion.</p>
@@ -32,9 +32,16 @@
       <dt>Answer an auth challenge</dt><dd>An inline blocking <code>onAuthRequired</code> handler becomes an <code>asyncBlocking</code> callback. The converter adds the auth provider permission.</dd>
       <dt>Use settings, edit headers, or inspect the body</dt><dd>These need an explicit port. Update a <a href="reference.html#store">rule store</a> when settings change, describe headers as edits, and use an observer for body inspection. MV3 doesn’t offer arbitrary body-dependent blocking.</dd></dl>
     </section>
+    <section id="scripting"><h2>Tab injection</h2><p>Direct <code>chrome.tabs.executeScript</code>, <code>insertCSS</code>, and <code>removeCSS</code> calls in background scripts move to <code>chrome.scripting</code>. Pass an explicit tab ID and an inline details object. The converter adds the scripting permission; existing host access or a user-granted <code>activeTab</code> is still required.</p>
+      <div class="listing"><div class="bar"><span>background.js · MV2 input</span></div><pre tabindex="0"><code>chrome.tabs.executeScript(tab.id, { code: <span class="str">'document.title'</span> }, titles =&gt; {
+  console.log(titles);
+});</code></pre></div>
+      <p>A fixed JavaScript string becomes a packaged file. The callback still receives values rather than frame metadata. A CSS string becomes <code>css</code>; a packaged filename becomes a one-element <code>files</code> array. Literal frame selectors and CSS origin are translated.</p>
+      <p>For computed JavaScript strings use a packaged function and arguments. For precise injection timing consider a registered content script. Implicit tab IDs and <code>matchAboutBlank: true</code> require manual migration. Other tab methods such as <code>tabs.query</code> remain available.</p>
+    </section>
     <section id="output"><h2>Inspect the output</h2><dl>
-      <dt><code>manifest.json</code></dt><dd>The manifest declares MV3 and a service worker. Required and optional host patterns move into their respective host permission lists. A browser action becomes an action.</dd>
-      <dt><code>webrequest-mv3-worker.js</code></dt><dd>A classic worker imports the copied background scripts in manifest order. Direct <code>chrome.browserAction</code> references in those scripts become <code>chrome.action</code>.</dd>
+      <dt><code>manifest.json</code></dt><dd>The manifest declares MV3 and a service worker. Required and optional host patterns move into their respective host permission lists. A browser action becomes an action. A legacy options page becomes <code>options_ui</code> with <code>open_in_tab: true</code>.</dd>
+      <dt><code>webrequest-mv3-worker.js</code></dt><dd>A classic worker imports the copied background scripts in manifest order. Direct browser-action references become <code>chrome.action</code>. Legacy extension messaging and URL helpers move to <code>chrome.runtime</code>, while tab-directed <code>sendRequest</code> becomes <code>tabs.sendMessage</code>.</dd>
       <dt><code>webrequest-mv3-rules.json</code></dt><dd>Created when static rules are extracted. The manifest enables the ruleset; each migrated registration is marked with its rule ID in the copied script.</dd></dl>
       <div class="hint"><strong>Check the rest of the extension.</strong> Only the listed background scripts are analyzed. Review imported files, popups, and content scripts separately. A worker has no DOM or <code>localStorage</code>, and its globals can disappear between events.</div>
     </section>

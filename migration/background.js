@@ -1,6 +1,13 @@
 import { parse } from 'acorn';
 import { ancestor } from 'acorn-walk';
 import { compileRule } from '../extension/lib/index.js';
+import { injectionMethods, rewriteInjection } from './scripting.js';
+
+const runtimeAliases = new Map(Object.entries({
+  getURL: 'getURL', lastError: 'lastError', connect: 'connect', onConnect: 'onConnect', onConnectExternal: 'onConnectExternal',
+  sendMessage: 'sendMessage', onMessage: 'onMessage', onMessageExternal: 'onMessageExternal',
+  sendRequest: 'sendMessage', onRequest: 'onMessage', onRequestExternal: 'onMessageExternal',
+}));
 
 const member = n => n?.type === 'MemberExpression'
   ? (n.computed ? n.property.type === 'Literal' && n.property.value : n.property.name) : undefined;
@@ -48,15 +55,38 @@ function ruleFor(callback, filter, id) {
   return compileRule(spec);
 }
 
-export function convertBackground(source, filename, firstId) {
+export function convertBackground(source, filename, firstId, emitScript) {
   let tree;
   try { tree = parse(source, { ecmaVersion: 'latest', locations: true }); }
   catch (error) { throw new Error(`${filename}:${error.loc.line}:${error.loc.column + 1}: ${error.message}`); }
   const rules = [], edits = [];
-  let auth = false;
+  let auth = false, scripting = false;
   const fail = (n, message) => { throw new Error(`${filename}:${n.loc.start.line}:${n.loc.start.column + 1}: ${message}`); };
+  // Walk visits children first. Render nested conversions before replacing a
+  // containing call (e.g. a messaging alias inside an injection callback).
+  function render(start, end) {
+    let result = source.slice(start, end);
+    for (const [a, b, replacement] of edits.filter(e => e[0] >= start && e[1] <= end).sort((a, b) => b[0] - a[0])) {
+      result = result.slice(0, a - start) + replacement + result.slice(b - start);
+    }
+    return result;
+  }
+  function replace(node, value) {
+    for (let i = edits.length - 1; i >= 0; i--) {
+      if (edits[i][0] >= node.start && edits[i][1] <= node.end) edits.splice(i, 1);
+    }
+    edits.push([node.start, node.end, value]);
+  }
   ancestor(tree, {
     MemberExpression(node, ancestors) {
+      const namespace = member(node.object), name = member(node);
+      if (node.object.object?.name === 'chrome') {
+        if (namespace === 'extension' && runtimeAliases.has(name)) replace(node, `chrome.runtime.${runtimeAliases.get(name)}`);
+        if (namespace === 'tabs' && name === 'sendRequest') replace(node, 'chrome.tabs.sendMessage');
+        if (namespace === 'tabs' && injectionMethods.has(name) && ancestors.at(-2)?.callee !== node) {
+          fail(node, `Use a direct call to chrome.tabs.${name} to migrate injection`);
+        }
+      }
       if (node.object.name !== 'chrome') return;
       if (member(node) === 'browserAction') edits.push([node.start, node.end, 'chrome.action']);
       if (member(node) !== 'webRequest') return;
@@ -68,6 +98,15 @@ export function convertBackground(source, filename, firstId) {
     },
     CallExpression(call, ancestors) {
       const callee = call.callee;
+      if (injectionMethods.has(member(callee)) && member(callee.object) === 'tabs' && callee.object.object.name === 'chrome') {
+        try {
+          if (call.optional || callee.optional || callee.object.optional) throw new Error('Optional injection calls need a manual port');
+          const expression = n => n.type === 'SequenceExpression' ? `(${render(n.start, n.end)})` : render(n.start, n.end);
+          replace(call, rewriteInjection(member(callee), call.arguments, expression, emitScript));
+          scripting = true;
+          return;
+        } catch (error) { fail(call, error.message); }
+      }
       if (member(callee) !== 'addListener') return;
       const event = callee.object, api = event.object;
       if (member(api) !== 'webRequest' || api.object.name !== 'chrome') {
@@ -108,8 +147,5 @@ export function convertBackground(source, filename, firstId) {
       } catch (error) { fail(call, error.message); }
     },
   });
-  for (const [start, end, text] of edits.sort((a, b) => b[0] - a[0])) {
-    source = source.slice(0, start) + text + source.slice(end);
-  }
-  return { source, rules, auth };
+  return { source: render(0, source.length), rules, auth, scripting };
 }

@@ -1,131 +1,79 @@
 # webrequest-mv3
 
-Port common `chrome.webRequest` listeners to Manifest V3. Describe blocking decisions as data and Chrome enforces them through `chrome.declarativeNetRequest` (DNR), even while the service worker is asleep. Keep ordinary event listeners for observation and use Chrome's asynchronous callback for authentication challenges.
+Convert a packaged Chrome extension from Manifest V2 to Manifest V3. The tool rewrites supported background scripts and the manifest into a **new, unpacked extension**. Use it to move blocking network listeners to declarative rules, move tab injection to `chrome.scripting`, and update legacy messaging calls.
 
-**Documentation:** [Quickstart](https://x7k6.github.io/webrequest-mv3/) · [Migration guide](https://x7k6.github.io/webrequest-mv3/migration.html) · [API reference](https://x7k6.github.io/webrequest-mv3/reference.html)
+[Documentation](https://x7k6.github.io/webrequest-mv3/) · [Migration guide](https://x7k6.github.io/webrequest-mv3/migration.html) · [Runtime API](https://x7k6.github.io/webrequest-mv3/reference.html)
 
-## Convert an existing extension
+## Convert and load an extension
 
-From the parent directory of your **unpacked MV2 extension**, run (Node 20+):
+With **Node.js 20+**, run this from the parent directory of the folder containing your MV2 `manifest.json`:
 
 ```sh
 npx --yes --package=github:x7k6/webrequest-mv3 webrequest-mv3 ./my-extension ./my-extension-mv3
 ```
 
-In `chrome://extensions`, enable **Developer mode** and **Load unpacked** → `my-extension-mv3`. The command leaves your source alone and requires a **new** output directory outside the input tree. Start from the packaged extension files, not a project containing unrelated files or secrets. There's no runtime package or remote script to ship with the converted extension.
+Open `chrome://extensions` in **Chrome 120+**, enable **Developer mode**, select **Load unpacked**, and choose `my-extension-mv3`. The output must be a new directory outside the input tree. If your extension uses a bundler, convert its packaged output rather than your entire project.
 
-For example, this existing MV2 registration can stay exactly as written in your source:
+## What gets migrated
 
-```js
-chrome.webRequest.onBeforeRequest.addListener(
-  details => ({ cancel: details.method === 'POST' }),
-  { urls: ['https://example.org/beacon/*'] }, ['blocking'],
-);
-```
-
-The build extracts it into an enabled static DNR rule. Plain observation callbacks keep using the native API. See [`examples/legacy/`](examples/legacy/) for a complete MV2 input. From a checkout, run `npm ci` then `node bin/webrequest-mv3.js examples/legacy ../legacy-mv3` to convert it.
-
-**What converts automatically:**
-
-- `background.scripts` → a classic service worker that imports the scripts in manifest order; required/optional host patterns → their respective host permission lists; `browser_action` → `action`, including direct `chrome.browserAction` references in those scripts.
-- Direct, top-level `chrome.webRequest.onBeforeRequest.addListener(...)` with an inline filter, literal flags and an inline callback returning `{ cancel: true }`, `{ redirectUrl: 'https://…' }`, or the method test above. No callback is executed by the converter.
-- Inline blocking `onAuthRequired` handlers → native `asyncBlocking` callbacks and `webRequestAuthProvider`. Nonblocking listeners stay in place.
-
-**When code needs an edit:** registration that depends on a setting, removable named blocking listeners, header mutation, or decisions based on a request body need an explicit port. The converter reports the file and line for unsupported direct registrations instead of guessing. It inspects the listed background scripts, not arbitrary imported files, popup scripts or content scripts. Like any MV3 worker, the result has no DOM, `localStorage`, or persistent in-memory state. Review other MV2 APIs in your extension and verify the generated behavior in Chrome. Static rules use the URL semantics and Chrome limits [described below](#url-matching-and-limits).
-
-### Import it in a build or worker
-
-Install directly from GitHub (`npm install --save-dev github:x7k6/webrequest-mv3` for a build). In your **Node build script**:
-
-```js
-import { migrateExtension } from 'webrequest-mv3/migrate';
-await migrateExtension('./my-extension', './my-extension-mv3');
-```
-
-Already have an MV3 service worker? In a bundled worker use `import { createRuleStore, observe, provideAuth } from 'webrequest-mv3'`. Without a bundler, copy `extension/lib/` and import from `./lib/index.js` in a module worker. The browser entry point has no Node dependencies. Use the runtime helpers below for settings-driven rules and other cases that need an explicit port.
-
-## Try it
-
-1. In `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select [`extension/`](extension/). The example requires Chrome 120+ and only requests host access to HTTP on `127.0.0.1`.
-2. With Node.js 20+ installed, run `npm run demo` and open <http://127.0.0.1:8765/webrequest-mv3/>. No dependency installation or build is needed.
-3. **Blocked navigation** should show `ERR_BLOCKED_BY_CLIENT`. **Redirect** should land on **Headers**, where the server echoes `X-Demo-Request: MV3`. In DevTools → Network the response should also have `X-Demo-Response: MV3`. Pin the extension to see the HTTP status badge set by `onCompleted`.
-
-Run `npm ci && npm test` for migration, compiler, rule lifecycle, observation and auth tests.
-
-## Port a listener
-
-An MV2 `onBeforeRequest` listener might return `{ cancel: details.method === 'POST' }`. Instead of invoking that callback, declare which requests to cancel:
-
-```js
-import { createRuleStore } from './lib/index.js';
-
-const rules = createRuleStore({ firstId: 100, lastId: 199 });
-chrome.runtime.onInstalled.addListener(() => {
-  rules.replace([{
-    id: 100,
-    event: 'onBeforeRequest',
-    filter: { urls: ['*://*.example.org/beacon/*'], types: ['xmlhttprequest', 'ping'] },
-    when: { requestMethods: ['post'] },
-    response: { cancel: true },
-  }]).catch(console.error);
-});
-```
-
-To use this in your extension, copy [`extension/lib/`](extension/lib/) into the extension package and import it from a **module** service worker. For the permission model used by the example, declare `declarativeNetRequestWithHostAccess` and grant the necessary `host_permissions` for the target and, for subresources, the initiator. Add `webRequest` only if observing events or handling auth. See the [example manifest](extension/manifest.json).
-
-| Intent | MV3 implementation |
+| MV2 input | MV3 output |
 | --- | --- |
-| Cancel or redirect before a request | `event: 'onBeforeRequest'`; use `response: { cancel: true }` or `{ redirectUrl: 'https://…' }`. Redirects accept absolute HTTP(S) URLs. |
-| Edit outgoing headers | `event: 'onBeforeSendHeaders'`; use `response.requestHeaders`, an array of explicit `{ header, operation, value? }` edits. |
-| Edit incoming headers | `event: 'onHeadersReceived'`; use `response.responseHeaders` with the same edit format. |
-| Restrict by method, originating site, or first/third party | Add `when.requestMethods` (lowercase DNR values), `when.initiatorDomains` (bare domains including their subdomains), or `when.domainType` (`firstParty` / `thirdParty`). These conditions are ANDed with the filter. |
-| Restrict a rule to one tab | Set `scope: 'session'` on the store and `filter.tabId` on the rule. Use a nonnegative Chrome tab ID. |
-| Observe timing, status, errors, redirects, headers or request body | Use `observe()` or native nonblocking `chrome.webRequest`. Chrome supplies the real event details. Registration is synchronous and returns an unsubscribe function. |
-| Respond to an HTTP authentication challenge | Use `provideAuth()` and add `webRequestAuthProvider` alongside `webRequest` and appropriate host permissions. |
+| Direct, top-level `webRequest.onBeforeRequest` listener that always cancels, redirects to a fixed HTTP(S) URL, or cancels on a supported HTTP method equality | Enabled static `declarativeNetRequest` rule. Use an inline callback, literal filter and literal flags. |
+| Nonblocking webRequest listener; inline blocking `onAuthRequired` handler | Native observation; native `asyncBlocking` auth callback with `webRequestAuthProvider`. |
+| `tabs.executeScript`, `tabs.insertCSS`, `tabs.removeCSS` | Corresponding `chrome.scripting` methods, with `target`, `files` or `css`, and the `scripting` permission. |
+| `extension.getURL`, legacy `extension` messaging and connection aliases | `runtime.getURL`, `runtime.sendMessage`, `runtime.onMessage`, and corresponding runtime connection events. `tabs.sendRequest` becomes **`tabs.sendMessage`** so the message still goes to the tab. |
+| `background.scripts`, `browser_action`, `options_page` | A classic service worker importing scripts in manifest order, `action`, and `options_ui` opening in its own tab. |
+| Required and optional host patterns in permission lists | `host_permissions` and `optional_host_permissions`, respectively. |
 
-Header operations are `set`, `append` and `remove` (no value). They modify named fields; an MV2 array representing the *entire* header list is not an edit list. Chrome restricts which request headers may be appended. See [worker.js](extension/worker.js) for working request and response examples.
+### Example: tab injection
 
-### Rule ownership and lifecycle
-
-- `store.replace(specs)` replaces **the whole reserved ID range** in one atomic Chrome update. Reuse an ID to change a rule; omit it to remove it; `await store.replace([])` clears the range. IDs outside the range are left alone. Give each range one writer and reuse one store instance per worker so overlapping calls are serialized.
-- The default `dynamic` ruleset survives worker and browser restarts and extension updates. `session` rules survive worker suspension but are cleared on browser shutdown and extension update. Reinstall session rules when needed. The store reads Chrome's rules before writing; it doesn't rely on IDs remembered in worker globals.
-- `compileRule(spec, scope?)` returns a native DNR rule without installing it. `id` is required; `priority` defaults to `1`. Conflicts follow [Chrome's DNR evaluation order](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest#rule-evaluation), not listener registration order.
-
-### URL matching and limits
-
-`filter.urls` is a nonempty list of alternatives. Supported: exact ASCII hosts (use Punycode for IDNs), `*`, `*.example.org` (also matches the apex), `*` in the path/query, `file:///…`, and `http`, `https`, `ws`, `wss`, `ftp` schemes. `*://` means HTTP or HTTPS. Here `<all_urls>` means the listed network/file schemes, subject to Chrome's actual interception and file-access permissions. Ports on requests are matched; explicit ports and literal IPv6 hosts in **patterns** are not supported. `filter.types` defaults to all supported resource types, including `main_frame`.
-
-Each description uses one anchored RE2 filter, even for multiple URL alternatives. Paths and queries match Chrome's serialized URL case-sensitively, **not** a percent-decoded path; percent-encoding equivalence can differ from a native `webRequest` match pattern. Use `store.replace()`'s rejection to report unsupported regexes and quota errors. For large lists or advanced redirects, prefer native DNR static rules or simpler `urlFilter`/domain conditions.
-
-There is no DNR `windowId`, per-request callback, or body-dependent blocking decision. Unsupported filter fields and stages throw rather than silently widening the rule. Observation cannot modify a request already underway.
-
-### Event listeners and authentication
-
-Register listeners at the **top level of the service worker** so Chrome can wake it for events. `observe` forwards native filters and event-specific options; it rejects `blocking` and `asyncBlocking`.
+This MV2 background call inserts a stylesheet into every frame of the specified tab:
 
 ```js
-import { observe, provideAuth } from './lib/index.js';
+chrome.tabs.insertCSS(tab.id, { file: 'reader.css', allFrames: true, cssOrigin: 'user' });
+```
 
-observe('onErrorOccurred', ({ error }) => console.debug(error), {
-  urls: ['https://example.org/*'],
-});
+The generated call is:
 
-// lookupForChallenge is supplied by your application. It should bound retries
-// and return { authCredentials: { username, password } }, { cancel: true },
-// or undefined to let Chrome handle the challenge normally.
-provideAuth({ urls: ['https://intranet.example.org/*'] }, async details => {
-  if (details.isProxy || details.challenger.host !== 'intranet.example.org' ||
-      details.challenger.port !== 443 || details.realm !== 'intranet') return;
-  return lookupForChallenge(details);
+```js
+chrome.scripting.insertCSS({
+  target: { tabId: tab.id, allFrames: true },
+  files: ['reader.css'],
+  origin: 'USER',
 });
 ```
 
-`provideAuth` bridges sync/Promise results to `onAuthRequired`'s `asyncBlocking` callback. A thrown error, rejection, or malformed result cancels that challenge. Both helpers return a function that removes the registered listener.
+- Pass an **explicit tab ID** and an inline details object. A literal `frameId` becomes `target.frameIds: [id]`. Ordinary tab operations such as `chrome.tabs.query` stay on `chrome.tabs`.
+- JavaScript `file` points to a packaged file. A fixed JavaScript `code` string is written to a packaged `.js` file at build time. Dynamic JavaScript strings require a manual port, usually `func` plus `args`. For CSS, `code` becomes `css` and can be an expression.
+- Script callbacks still receive an array of per-frame **values** and can read `chrome.runtime.lastError`. The promise form also resolves to values. `scripting` by itself does not grant site access: injection still needs an existing host grant or `activeTab` from a user gesture.
+- Implicit active-tab targeting, `matchAboutBlank: true`, and explicit scheduling other than `executeScript` at `document_idle` need review. The converter reports the file and line for unsupported direct calls.
 
-References: [Migrating blocking listeners](https://developer.chrome.com/docs/extensions/develop/migrate/blocking-web-requests) · [declarativeNetRequest](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) · [webRequest](https://developer.chrome.com/docs/extensions/reference/api/webRequest).
+## Use it in a build
 
-## Publish or preview the docs
+```sh
+npm install --save-dev github:x7k6/webrequest-mv3
+```
 
-The static site is in [`docs/`](docs/). In **Settings → Pages → Build and deployment**, select **Deploy from a branch**, choose **main** and **/docs**, then **Save**. Subsequent pushes to that source publish automatically. No build command or dependencies are required.
+```js
+// build.mjs (Node.js)
+import { migrateExtension } from 'webrequest-mv3/migrate';
+const { outputDir, ruleCount } = await migrateExtension('./my-extension', './my-extension-mv3');
+console.log(`${ruleCount} static network rules in ${outputDir}`);
+```
 
-For a local preview, run `python3 -m http.server 8000 --bind 127.0.0.1 --directory docs` from the repository root and open <http://127.0.0.1:8000/>.
+The converter inspects the files listed in `background.scripts`. Review popup scripts, content scripts, imported files, and aliases separately. HTML background pages, DOM access, persistent globals, and arbitrary per-request blocking decisions need explicit migration.
+
+For settings-driven rules or header edits, import `createRuleStore` and `compileRule` from `webrequest-mv3` in a bundled worker. `observe` and `provideAuth` cover native request events. Without a bundler, copy [`extension/lib/`](extension/lib/) and import from `./lib/index.js` in a module worker. See the [working worker](extension/worker.js) and [API reference](https://x7k6.github.io/webrequest-mv3/reference.html) for permissions, matching limits, and examples.
+
+## Verify locally
+
+```sh
+npm ci
+npm test
+node bin/webrequest-mv3.js examples/legacy ../legacy-mv3
+npm run demo
+```
+
+Load `../legacy-mv3` unpacked, then open <http://127.0.0.1:8765/webrequest-mv3/>. **Blocked navigation** should fail; **Redirect** should land on the headers page. To test header edits too, disable the converted fixture and load [`extension/`](extension/) instead.
+
+**Documentation site:** serve [`docs/`](docs/) locally with `python3 -m http.server 8000 --bind 127.0.0.1 --directory docs`. To publish, choose **Settings → Pages → Deploy from a branch → main → /docs**. No build step is required.

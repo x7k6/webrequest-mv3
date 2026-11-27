@@ -80,3 +80,76 @@ test('protect source tree and reject out-of-package script paths', async t => {
   await assert.rejects(f.build(), /package-relative paths/);
   await assert.rejects(stat(f.out), { code: 'ENOENT' });
 });
+
+test('inject packaged code into the requested frame and preserve callback results and lastError', async t => {
+  const f = await fixture(t, `chrome.tabs.query({ active: true }, ([tab]) => {
+    chrome.tabs.executeScript(tab.id, {code: 'document.title', frameId: 3}, values => {
+      chrome.extension.sendRequest({ values, error: chrome.extension.lastError?.message });
+    });
+  });`, { permissions: ['activeTab'], options_page: 'options.html' });
+  await f.build();
+  const m = JSON.parse(await f.read('manifest.json'));
+  assert.deepEqual(m.permissions, ['activeTab', 'scripting']);
+  assert.equal(m.host_permissions, undefined);
+  assert.deepEqual(m.options_ui, { page: 'options.html', open_in_tab: true });
+  let injection, reply, message;
+  const runtime = { sendMessage(m) { message = m; } };
+  runInNewContext(await f.read('bg.js'), { chrome: { runtime,
+    tabs: { query(_filter, cb) { cb([{ id: 7 }]); } },
+    scripting: { executeScript(spec, cb) { injection = spec; reply = cb; } },
+  } });
+  assert.deepEqual(JSON.parse(JSON.stringify(injection.target)), { tabId: 7, frameIds: [3] });
+  assert.equal(await f.read(injection.files[0]), 'document.title');
+  reply([{ result: 'Page title', frameId: 3 }]);
+  assert.deepEqual([...message.values], ['Page title']);
+  runtime.lastError = { message: 'Access denied' };
+  reply();
+  delete runtime.lastError;
+  assert.equal(message.error, 'Access denied');
+  assert.equal(message.values, undefined);
+});
+
+test('migrate file injection and matching CSS insert/remove operations in order', async t => {
+  const f = await fixture(t, `(async () => {
+    const css = 'body { color: navy }';
+    await chrome.tabs.insertCSS(0, {code: css, allFrames: true, cssOrigin: 'user'});
+    const result = await chrome.tabs.executeScript(0, {file: 'title.js'});
+    await chrome.tabs.removeCSS(0, {code: css, allFrames: true, cssOrigin: 'user'});
+    return result;
+  })()`);
+  await f.build();
+  const calls = [];
+  const result = await runInNewContext(await f.read('bg.js'), { chrome: { scripting: {
+    insertCSS: spec => calls.push(spec), removeCSS: spec => calls.push(spec),
+    executeScript: async spec => { calls.push(spec); return [{ result: 'Main' }, { result: 'Sub' }]; },
+  } } });
+  assert.deepEqual([...result], ['Main', 'Sub']);
+  const [insert, execute, remove] = JSON.parse(JSON.stringify(calls));
+  assert.deepEqual(insert, { target: { tabId: 0, allFrames: true }, css: 'body { color: navy }', origin: 'USER' });
+  assert.deepEqual(remove, insert);
+  assert.deepEqual(execute, { target: { tabId: 0 }, files: ['title.js'] });
+});
+
+test('keep tab messaging separate from runtime messaging and do not grant scripting unnecessarily', async t => {
+  const f = await fixture(t, `chrome.extension.onRequest.addListener((_msg, sender) => {
+    chrome.tabs.sendRequest(sender.tab.id, chrome.extension.getURL('help.html'));
+  });`);
+  await f.build();
+  assert.ok(!JSON.parse(await f.read('manifest.json')).permissions.includes('scripting'));
+  let reply;
+  runInNewContext(await f.read('bg.js'), { chrome: {
+    runtime: { onMessage: { addListener(cb) { cb(null, { tab: { id: 1 } }); } }, getURL: path => `extension:/${path}` },
+    tabs: { sendMessage(...args) { reply = args; } },
+  } });
+  assert.deepEqual(reply, [1, 'extension:/help.html']);
+});
+
+test('decline ambiguous injection instead of widening the target or evaluating code', async t => {
+  for (const args of ["{file: 'a.js'}", '1, options', '1, {code: buildScript()}',
+    "1, {file: 'a.js', runAt: 'document_start'}", "1, {file: 'a.js', matchAboutBlank: true}",
+    "1, {file: 'a.js', frameId: 1, allFrames: true}"]) {
+    const f = await fixture(t, `\nchrome.tabs.executeScript(${args});`);
+    await assert.rejects(f.build(), /bg\.js:2:1:/);
+    await assert.rejects(stat(f.out), { code: 'ENOENT' });
+  }
+});
