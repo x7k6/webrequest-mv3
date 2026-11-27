@@ -28,8 +28,10 @@
   <section class="section" id="quickstart" aria-labelledby="start-title">
     <p class="label">01 / Quickstart</p>
     <div class="section-title"><h2 id="start-title">Convert your first extension</h2><div class="meta"><span class="pill">Node 20+</span><span class="pill">Chrome 120+</span></div></div>
-    <p>Start in the parent directory of an unpacked MV2 extension. Replace <code>my-extension</code> with the folder containing its <code>manifest.json</code>. The CLI creates a sibling folder with <code>-mv3</code> added to its name.</p>
-    <div class="listing"><div class="bar"><span>Terminal</span></div><pre tabindex="0"><code>npx --yes github:x7k6/webrequest-mv3 ./my-extension</code></pre></div>
+    <p>Install the CLI once with npm. Then run <code>webrequest-mv3</code> from any directory to open its help menu.</p>
+    <div class="listing"><div class="bar"><span>Terminal · install</span></div><pre tabindex="0"><code>npm install --global github:x7k6/webrequest-mv3</code></pre></div>
+    <p>To convert an extension, pass the folder containing its MV2 <code>manifest.json</code>. The CLI creates a sibling folder with <code>-mv3</code> added to its name.</p>
+    <div class="listing"><div class="bar"><span>Terminal · convert</span></div><pre tabindex="0"><code>webrequest-mv3 ./my-extension</code></pre></div>
     <p>Open <code>chrome://extensions</code>, enable <strong>Developer mode</strong>, select <strong>Load unpacked</strong>, and choose <code>my-extension-mv3</code>. Your original extension stays in its own directory.</p>
     <div class="hint"><strong>Want a known-good input?</strong> Try the <a href="https://github.com/x7k6/webrequest-mv3/tree/main/examples/legacy">legacy example</a> and follow the <a href="migration.html#verify">verification steps</a>.</div>
   </section>

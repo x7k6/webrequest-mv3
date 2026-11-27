@@ -3,11 +3,12 @@ import { lstat, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { migrateExtension } from '../migration/index.js';
 
 const help = `Convert an unpacked Chrome extension from Manifest V2 to V3.
 
-Usage: webrequest-mv3 <folder or manifest.json> [output-folder] [options]
+Usage:
+  webrequest-mv3                                            Show this help
+  webrequest-mv3 <folder or manifest.json> [output-folder] [options]
 
   -o, --output <folder>   Write to a new folder (default: <input>-mv3, beside the input)
       --check             Test the conversion in a temporary copy and discard it
@@ -44,7 +45,7 @@ async function inputDirectory(arg) {
   return realpath(path);
 }
 
-async function checkConversion(input) {
+async function checkConversion(input, migrateExtension) {
   const scratch = await mkdtemp(join(tmpdir(), 'webrequest-mv3-check-'));
   try {
     return await migrateExtension(input, join(scratch, 'extension'));
@@ -74,9 +75,10 @@ async function run(args) {
   if (values.check && destination !== undefined) throw new UsageError('--check uses a temporary copy. Omit the output folder to check the conversion.');
 
   const input = await inputDirectory(positionals[0]);
+  const { migrateExtension } = await import('../migration/index.js');
   let result;
   if (values.check) {
-    result = await checkConversion(input);
+    result = await checkConversion(input, migrateExtension);
     console.log('Conversion check passed. The temporary copy was removed.');
   } else {
     const output = destination === undefined ? input + '-mv3' : resolve(destination);
