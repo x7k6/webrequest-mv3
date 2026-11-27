@@ -9,10 +9,18 @@ Convert a packaged Chrome extension from Manifest V2 to Manifest V3. The tool fo
 With **Node.js 20+**, run this from the parent directory of the folder containing your MV2 `manifest.json`:
 
 ```sh
-npx --yes --package=github:x7k6/webrequest-mv3 webrequest-mv3 ./my-extension ./my-extension-mv3
+npx --yes github:x7k6/webrequest-mv3 ./my-extension
 ```
 
-Open `chrome://extensions` in **Chrome 120+**, enable **Developer mode**, select **Load unpacked**, and choose `my-extension-mv3`. The output must be a new directory outside the input tree. If your extension uses a bundler, convert its packaged output rather than your entire project.
+This creates `my-extension-mv3` beside `my-extension`. Open `chrome://extensions` in **Chrome 120+**, enable **Developer mode**, select **Load unpacked**, and choose that new folder. If your extension uses a bundler, pass its packaged output folder (or the `manifest.json` inside it).
+
+| To… | Run |
+| --- | --- |
+| Check whether conversion succeeds before keeping the result | `npx --yes github:x7k6/webrequest-mv3 ./my-extension --check` |
+| Choose a different output folder | `npx --yes github:x7k6/webrequest-mv3 ./my-extension -o ./release-mv3` |
+| See usage and examples | `npx --yes github:x7k6/webrequest-mv3 --help` |
+
+`--check` runs the converter on a temporary copy and cleans it up; test runtime behavior in Chrome after conversion. The original `webrequest-mv3 <input> <output>` syntax still works. The destination must be a new folder outside the input, with an existing parent.
 
 ## What gets migrated
 

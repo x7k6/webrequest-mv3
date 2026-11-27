@@ -78,6 +78,7 @@ export async function migrateExtension(inputDir, outputDir) {
     if (m.manifest_version !== 2) throw new Error('Expected an MV2 manifest.json');
     const { entries, imports, directory, fromPage } = await discoverEntries(output, m);
     const rules = [];
+    let changedScriptCount = 0;
     let auth = false, scripting = false;
     const injected = new Map();
     const emitScript = source => {
@@ -89,7 +90,10 @@ export async function migrateExtension(inputDir, outputDir) {
       const path = join(output, name);
       const old = await readFile(path, 'utf8');
       const converted = convertScript(old, name, rules.length + 1, emitScript, { ...entry, fromPage });
-      if (converted.source !== old) await writeFile(path, converted.source);
+      if (converted.source !== old) {
+        await writeFile(path, converted.source);
+        changedScriptCount++;
+      }
       for (const rule of converted.rules) rules.push(rule);
       auth ||= converted.auth;
       scripting ||= converted.scripting;
@@ -104,7 +108,7 @@ export async function migrateExtension(inputDir, outputDir) {
       await writeFile(join(output, workerPath), `importScripts(${urls.join(', ')});\n`, { flag: 'wx' });
     }
     await writeFile(manifestPath, json(m));
-    return { outputDir: output, ruleCount: rules.length };
+    return { outputDir: output, ruleCount: rules.length, scriptCount: entries.size, changedScriptCount };
   } catch (error) {
     await rm(output, { recursive: true, force: true });
     throw error;
