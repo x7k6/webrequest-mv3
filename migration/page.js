@@ -4,7 +4,7 @@ import { parse } from 'parse5';
 
 // Work with extension URL paths, independent of the host filesystem. Resolve
 // ../ relative to the HTML file, but never read outside the copied package.
-function localPath(value, directory, where) {
+export function localPath(value, directory, where) {
   if (typeof value !== 'string' || !value || value.trim() !== value || /[\\:%?#\x00-\x1f]/.test(value) || value.startsWith('//')) {
     throw new Error(`${where}: expected a local extension file path`);
   }
@@ -15,13 +15,48 @@ function localPath(value, directory, where) {
   return name;
 }
 
+async function readDocument(root, page) {
+  const html = await readFile(posix.join(root, page), 'utf8');
+  return parse(html, { sourceCodeLocationInfo: true, onParseError(error) {
+    if (error.code !== 'missing-doctype') throw new Error(`${page}:${error.startLine}:${error.startCol}: ${error.code}`);
+  } });
+}
+
+// UI documents stay documents. Inspect executable script tags in place; don't
+// reserialize markup, change loading order, or treat inert template data as JS.
+export async function readUiPage(root, page) {
+  const scripts = [];
+  function visit(node) {
+    const loc = node.sourceCodeLocation;
+    const where = loc ? `${page}:${loc.startLine}:${loc.startCol}` : page;
+    const attrs = new Map(node.attrs?.map(a => [a.name, a.value]));
+    if (node.tagName === 'base' && attrs.has('href')) throw new Error(`${where}: resolve <base href> script paths manually`);
+    for (const key of attrs.keys()) {
+      if (key.startsWith('on')) throw new Error(`${where}: move inline ${key} into a packaged event listener`);
+    }
+    if (node.tagName === 'script') {
+      const type = (attrs.get('type') || '').toLowerCase().trim();
+      if (['application/json', 'application/ld+json', 'text/template'].includes(type)) return;
+      const module = type === 'module';
+      if ((!module && !['', 'text/javascript', 'application/javascript'].includes(type)) || attrs.has('integrity')) {
+        throw new Error(`${where}: unsupported script type or integrity constraint; review this script manually`);
+      }
+      if (!attrs.has('src')) {
+        if (node.childNodes.some(n => n.value?.trim())) throw new Error(`${where}: move executable inline code into a packaged script file`);
+        return;
+      }
+      scripts.push({ name: localPath(attrs.get('src'), posix.dirname(page), where), sourceType: module ? 'module' : 'script' });
+    }
+    for (const child of node.childNodes || []) visit(child);
+  }
+  visit(await readDocument(root, page));
+  return scripts;
+}
+
 export async function readBackgroundPage(root, entry) {
   const page = localPath(entry, '.', 'manifest.json: background.page');
   const directory = posix.dirname(page);
-  const html = await readFile(posix.join(root, page), 'utf8');
-  const doc = parse(html, { sourceCodeLocationInfo: true, onParseError(error) {
-    if (error.code !== 'missing-doctype') throw new Error(`${page}:${error.startLine}:${error.startCol}: ${error.code}`);
-  } });
+  const doc = await readDocument(root, page);
   const scripts = [];
   function visit(node) {
     const tag = node.nodeName;

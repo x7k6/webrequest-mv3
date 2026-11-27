@@ -57,9 +57,11 @@ function ruleFor(callback, filter, id) {
 
 const pageGlobals = new Set(['document', 'window', 'localStorage', 'sessionStorage', 'XMLHttpRequest', 'DOMParser']);
 
-export function convertBackground(source, filename, firstId, emitScript, { fromPage = false } = {}) {
+export function convertScript(source, filename, firstId, emitScript, { sourceType, contexts, fromPage }) {
+  const inBackgroundPage = fromPage && contexts.has('background');
+  const backgroundOnly = contexts.has('background') && contexts.size === 1;
   let tree;
-  try { tree = parse(source, { ecmaVersion: 'latest', locations: true }); }
+  try { tree = parse(source, { ecmaVersion: 'latest', locations: true, sourceType }); }
   catch (error) { throw new Error(`${filename}:${error.loc.line}:${error.loc.column + 1}: ${error.message}`); }
   const rules = [], edits = [];
   let auth = false, scripting = false;
@@ -81,14 +83,17 @@ export function convertBackground(source, filename, firstId, emitScript, { fromP
   }
   ancestor(tree, {
     Identifier(node) {
-      if (fromPage && pageGlobals.has(node.name)) fail(node, `${node.name} is unavailable in a service worker; port this page dependency manually`);
+      if (inBackgroundPage && pageGlobals.has(node.name)) fail(node, `${node.name} is unavailable in a service worker; port this page dependency manually`);
     },
     MemberExpression(node, ancestors) {
       const namespace = member(node.object), name = member(node);
-      if (fromPage && ['self', 'globalThis'].includes(node.object.name) && pageGlobals.has(name)) {
+      if (inBackgroundPage && ['self', 'globalThis'].includes(node.object.name) && pageGlobals.has(name)) {
         fail(node, `${name} is unavailable in a service worker; port this page dependency manually`);
       }
       if (node.object.object?.name === 'chrome') {
+        if (['extension', 'runtime'].includes(namespace) && name === 'getBackgroundPage') {
+          fail(node, 'Use runtime messaging to access worker state instead of getBackgroundPage()');
+        }
         if (namespace === 'extension' && runtimeAliases.has(name)) replace(node, `chrome.runtime.${runtimeAliases.get(name)}`);
         if (namespace === 'tabs' && name === 'sendRequest') replace(node, 'chrome.tabs.sendMessage');
         if (namespace === 'tabs' && injectionMethods.has(name) && ancestors.at(-2)?.callee !== node) {
@@ -96,6 +101,9 @@ export function convertBackground(source, filename, firstId, emitScript, { fromP
         }
       }
       if (node.object.name !== 'chrome') return;
+      if (contexts.has('content') && ['tabs', 'browserAction', 'webRequest'].includes(member(node))) {
+        fail(node, `chrome.${member(node)} is unavailable in content scripts; send a runtime message to the extension`);
+      }
       if (member(node) === 'browserAction') edits.push([node.start, node.end, 'chrome.action']);
       if (member(node) !== 'webRequest') return;
       const [call, operation, event] = ancestors.slice(-4, -1);
@@ -128,6 +136,9 @@ export function convertBackground(source, filename, firstId, emitScript, { fromP
         const flags = options ? literal(options) : [];
         if (!Array.isArray(flags) || flags.some(f => typeof f !== 'string')) throw new Error('expected literal listener flags');
         const name = member(event);
+        if (!backgroundOnly && flags.some(f => ['blocking', 'asyncBlocking'].includes(f))) {
+          throw new Error('blocking listeners in UI or shared scripts need a manual port to preserve their lifetime');
+        }
         if (flags.includes('asyncBlocking')) {
           if (name !== 'onAuthRequired' || flags.includes('blocking')) throw new Error('asyncBlocking is only supported for auth');
           auth = true;

@@ -131,6 +131,7 @@ test('inject packaged code into the requested frame and preserve callback result
       chrome.extension.sendRequest({ values, error: chrome.extension.lastError?.message });
     });
   });`, { permissions: ['activeTab'], options_page: 'options.html' });
+  await writeFile(join(f.src, 'options.html'), '<title>Options</title>');
   await f.build();
   const m = JSON.parse(await f.read('manifest.json'));
   assert.deepEqual(m.permissions, ['activeTab', 'scripting']);
@@ -194,6 +195,61 @@ test('decline ambiguous injection instead of widening the target or evaluating c
     "1, {file: 'a.js', frameId: 1, allFrames: true}"]) {
     const f = await fixture(t, `\nchrome.tabs.executeScript(${args});`);
     await assert.rejects(f.build(), /bg\.js:2:1:/);
+    await assert.rejects(stat(f.out), { code: 'ENOENT' });
+  }
+});
+
+test('wire a popup to its content script through the migrated messaging APIs without a worker', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'wr-popup-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const out = join(dir, 'dist');
+  await migrateExtension('examples/popup', out);
+  const read = path => readFile(join(out, path), 'utf8');
+  const m = JSON.parse(await read('manifest.json'));
+  assert.equal(m.action.default_popup, 'ui/popup.html');
+  assert.equal(m.background, undefined);
+  assert.deepEqual(m.permissions, []);
+  assert.deepEqual(m.content_scripts[0].matches, ['http://127.0.0.1/*']);
+  let receive, click;
+  const output = {};
+  runInNewContext(await read(m.content_scripts[0].js[0]), { document: { title: 'Local demo' },
+    chrome: { runtime: { onMessage: { addListener(fn) { receive = fn; } } } } });
+  runInNewContext(await read('ui/popup.js'), {
+    document: { querySelector(id) { return id === '#result' ? output : { addEventListener(_event, fn) { click = fn; } }; } },
+    chrome: { runtime: {}, tabs: { query(_q, cb) { cb([{ id: 73 }]); }, sendMessage(id, msg, cb) {
+      assert.equal(id, 73); receive(msg, {}, cb);
+    } } },
+  });
+  click();
+  assert.equal(output.textContent, 'Local demo');
+});
+
+test('shared module entry in popup and options page: keep markup and convert injection once', async t => {
+  const f = await fixture(t, '', { background: undefined, permissions: ['activeTab'],
+    options_ui: { page: 'options.html' }, browser_action: { default_popup: 'ui/popup.html' } });
+  const markup = '<!doctype html><main>Preferences</main><script type="module" src="../shared.mjs"></script>';
+  await mkdir(join(f.src, 'ui'));
+  await writeFile(join(f.src, 'ui/popup.html'), markup);
+  await writeFile(join(f.src, 'options.html'), '<script type="module" src="/shared.mjs"></script>');
+  await writeFile(join(f.src, 'shared.mjs'), `export const apply = tab => chrome.tabs.executeScript(tab.id, { code: 'document.title' });`);
+  await f.build();
+  assert.equal(await f.read('ui/popup.html'), markup);
+  assert.match(await f.read('shared.mjs'), /chrome\.scripting\.executeScript/);
+  assert.equal(await f.read('webrequest-mv3-injected-1.js'), 'document.title');
+  assert.deepEqual(JSON.parse(await f.read('manifest.json')).permissions, ['activeTab', 'scripting']);
+});
+
+test('stop on unsupported UI code, out-of-package paths and lifetime changes even for shared files', async t => {
+  for (const [html, source, expected] of [
+    ['<button onclick="run()">Run</button>', '', /popup\.html:1:1:.*inline onclick/],
+    ['<script>run()</script>', '', /popup\.html:1:1:.*inline code/],
+    ['<script src="../outside.js"></script>', '', /inside the extension/],
+    ['<script src="bg.js"></script>', registration('() => ({cancel:true})'), /bg\.js:1:1:.*lifetime/],
+    ['<script src="bg.js"></script>', 'chrome.extension.getBackgroundPage().load()', /bg\.js:1:1:.*runtime messaging/],
+  ]) {
+    const f = await fixture(t, source, { browser_action: { default_popup: 'popup.html' } });
+    await writeFile(join(f.src, 'popup.html'), html);
+    await assert.rejects(f.build(), expected);
     await assert.rejects(stat(f.out), { code: 'ENOENT' });
   }
 });

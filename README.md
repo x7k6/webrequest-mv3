@@ -1,6 +1,6 @@
 # webrequest-mv3
 
-Convert a packaged Chrome extension from Manifest V2 to Manifest V3. The tool rewrites supported background scripts and the manifest into a **new, unpacked extension**. Use it to move blocking network listeners to declarative rules, move tab injection to `chrome.scripting`, and update legacy messaging calls.
+Convert a packaged Chrome extension from Manifest V2 to Manifest V3. The tool follows manifest entries for background scripts, extension pages and content scripts, and writes a **new, unpacked extension**. Use it to move blocking network listeners to declarative rules, move tab injection to `chrome.scripting`, and update legacy messaging calls.
 
 [Documentation](https://x7k6.github.io/webrequest-mv3/) · [Migration guide](https://x7k6.github.io/webrequest-mv3/migration.html) · [Runtime API](https://x7k6.github.io/webrequest-mv3/reference.html)
 
@@ -38,6 +38,14 @@ If your MV2 manifest uses `"background": { "page": "pages/background.html" }`, t
 
 The worker is generated beside the HTML file. It loads `shared.js` first, then `pages/listeners.js`; both scripts go through the normal API migrations. This subset accepts classic local `.js` scripts, comments, and simple document metadata. Inline scripts, `async`/`defer`, modules, and markup such as iframes require manual migration. Common page-only globals such as `document` and `localStorage` are flagged with a source location.
 
+### Popups, options pages and content scripts
+
+The converter follows local `<script src>` tags in `browser_action.default_popup`, `options_page`, `options_ui.page`, `devtools_page`, and `chrome_url_overrides`. Both classic scripts and external `type="module"` entry files are supported. The HTML stays in place, including DOM controls, script order, and loading attributes. Popup-only extensions do not need a background worker.
+
+Files listed in `content_scripts[].js` get compatible messaging and URL rewrites; their `matches`, CSS and injection timing stay in the manifest. For an example, convert [`examples/popup/`](examples/popup/) and open its **Read page title** popup on the loopback demo. It sends a message to a content script and displays its reply.
+
+Move inline JavaScript and inline HTML event handlers into a packaged script first. Review module dependencies, dynamically loaded scripts, nested frames and popups selected at runtime separately. Calls to `getBackgroundPage()` and blocking listeners owned by UI or shared scripts require a manual port so they retain the intended lifetime.
+
 ### Example: tab injection
 
 This MV2 background call inserts a stylesheet into every frame of the specified tab:
@@ -74,7 +82,7 @@ const { outputDir, ruleCount } = await migrateExtension('./my-extension', './my-
 console.log(`${ruleCount} static network rules in ${outputDir}`);
 ```
 
-The converter inspects the scripts listed in the manifest or loaded directly by a supported background page. Review popup scripts, content scripts, imported files, and aliases separately. In particular, callers of `getBackgroundPage()` need a worker-compatible communication path, such as runtime messaging. Worker globals do not persist across suspension.
+The converter processes each discovered entry file once, including files shared by multiple pages. For state shared between a popup and its service worker, use runtime messaging or extension storage; worker globals do not persist across suspension.
 
 For settings-driven rules or header edits, import `createRuleStore` and `compileRule` from `webrequest-mv3` in a bundled worker. `observe` and `provideAuth` cover native request events. Without a bundler, copy [`extension/lib/`](extension/lib/) and import from `./lib/index.js` in a module worker. See the [working worker](extension/worker.js) and [API reference](https://x7k6.github.io/webrequest-mv3/reference.html) for permissions, matching limits, and examples.
 

@@ -1,7 +1,7 @@
 import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, posix, relative, resolve, sep } from 'node:path';
-import { convertBackground } from './background.js';
-import { readBackgroundPage } from './page.js';
+import { convertScript } from './script.js';
+import { discoverEntries } from './entries.js';
 
 const worker = 'webrequest-mv3-worker.js';
 const rulesFile = 'webrequest-mv3-rules.json';
@@ -56,7 +56,7 @@ function convertManifest(m, rules, auth, scripting, workerPath) {
   }
   m.manifest_version = 3;
   if (!(parseInt(m.minimum_chrome_version, 10) >= 120)) m.minimum_chrome_version = '120';
-  m.background = { service_worker: workerPath };
+  if (workerPath) m.background = { service_worker: workerPath };
 }
 
 /** Build a new unpacked extension from a directory containing an MV2 manifest. */
@@ -76,13 +76,7 @@ export async function migrateExtension(inputDir, outputDir) {
     const manifestPath = join(output, 'manifest.json');
     const m = JSON.parse(await readFile(manifestPath, 'utf8'));
     if (m.manifest_version !== 2) throw new Error('Expected an MV2 manifest.json');
-    const fromPage = m.background?.page !== undefined;
-    if (fromPage && m.background.scripts !== undefined) throw new Error('manifest.json: choose background.page or background.scripts, not both');
-    const { scripts, directory } = fromPage ? await readBackgroundPage(output, m.background.page)
-      : { scripts: m.background?.scripts, directory: '.' };
-    if (!Array.isArray(scripts) || !scripts.length) {
-      throw new Error('Expected a background.scripts list or a script-only background.page');
-    }
+    const { entries, imports, directory, fromPage } = await discoverEntries(output, m);
     const rules = [];
     let auth = false, scripting = false;
     const injected = new Map();
@@ -91,29 +85,24 @@ export async function migrateExtension(inputDir, outputDir) {
       injected.set(path, source);
       return path;
     };
-    const imports = [];
-    for (const entry of scripts) {
-      const name = typeof entry === 'string' && entry.replace(/^(\.\/)+/, '');
-      if (!name || /[\\:%?#\x00-\x1f]/.test(name) || name.split('/').some(p => !p || p === '..' || p === '.')) {
-        throw new Error('manifest.json: background.scripts must use package-relative paths');
-      }
-      if (imports.includes(name)) throw new Error(`Duplicate background script: ${name}`);
-      imports.push(name);
+    for (const [name, entry] of entries) {
       const path = join(output, name);
       const old = await readFile(path, 'utf8');
-      const converted = convertBackground(old, name, rules.length + 1, emitScript, { fromPage });
+      const converted = convertScript(old, name, rules.length + 1, emitScript, { ...entry, fromPage });
       if (converted.source !== old) await writeFile(path, converted.source);
       for (const rule of converted.rules) rules.push(rule);
       auth ||= converted.auth;
       scripting ||= converted.scripting;
     }
     // Keep relative URLs in the scripts based in the original page directory.
-    const workerPath = posix.join(directory, worker);
+    const workerPath = imports.length ? posix.join(directory, worker) : undefined;
     convertManifest(m, rules, auth, scripting, workerPath);
     for (const [path, contents] of injected) await writeFile(join(output, path), contents, { flag: 'wx' });
     if (rules.length) await writeFile(join(output, rulesFile), json(rules), { flag: 'wx' });
-    const urls = imports.map(name => JSON.stringify('./' + posix.relative(directory, name)));
-    await writeFile(join(output, workerPath), `importScripts(${urls.join(', ')});\n`, { flag: 'wx' });
+    if (workerPath) {
+      const urls = imports.map(name => JSON.stringify('./' + posix.relative(directory, name)));
+      await writeFile(join(output, workerPath), `importScripts(${urls.join(', ')});\n`, { flag: 'wx' });
+    }
     await writeFile(manifestPath, json(m));
     return { outputDir: output, ruleCount: rules.length };
   } catch (error) {
