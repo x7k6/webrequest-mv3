@@ -1,5 +1,7 @@
 # webrequest-mv3
 
+[MIT License](LICENSE) · Copyright © 2026 x7k6
+
 ![Manifest V2 to V3: original package in, unpacked MV3 extension out.](docs/cover.svg)
 
 Convert a packaged Chrome extension from Manifest V2 to Manifest V3. The tool follows manifest entries for background scripts, extension pages and content scripts, and writes a **new, unpacked extension**. Use it to move blocking network listeners to declarative rules, move tab injection to `chrome.scripting`, and update legacy messaging calls.
